@@ -49,8 +49,10 @@ module fir
     localparam S_IDLE   = 3'b000;
     localparam S_FETCH  = 3'b001;
     localparam S_CALC   = 3'b010;
-    localparam S_OUT    = 3'b011;
-    localparam S_FINISH = 3'b100;
+    localparam S_WAIT   = 3'b011;
+    localparam S_WAIT2  = 3'b100;
+    localparam S_OUT    = 3'b101;
+    localparam S_FINISH = 3'b110;
     
     integer                 i;
     
@@ -70,8 +72,8 @@ module fir
     reg                     data_length_setting_w;
     reg                     tap_setting_w           [Tape_Num-1:0];
 
-    reg  [1:0]              state;
-    reg  [1:0]              next_state;
+    reg  [2:0]              state;
+    reg  [2:0]              next_state;
     wire                    done;
     wire                    sent;
     reg                     received;
@@ -108,6 +110,7 @@ module fir
 
     reg                     ss_tready_w;
 
+    reg  [pDATA_WIDTH-1:0]  data_counter;
     reg  [$clog2(Tape_Num)-1:0] counter;
     reg  [$clog2(Tape_Num)-1:0] iterator;
     reg  [pDATA_WIDTH-1:0]  x_in;
@@ -125,6 +128,7 @@ module fir
     wire [pADDR_WIDTH-1:0]  r_tap_addr;
 
     reg                     tap_setting_check   [Tape_Num:0];
+    wire [$clog2(Tape_Num)-1:0]  distance_c_i;
     //-------unused!---------------------
     wire                    mul_overflow;
     wire                    add_overflow;
@@ -145,11 +149,13 @@ module fir
     assign sm_tlast  = sm_tlast_reg;
     assign sm_tdata  = sm_tdata_reg;
 
-    assign mul_in_a = (mul_new_data)? ((state == S_CALC) ? x_in : 0) : data_Do;
+    assign mul_in_a = (mul_new_data)? x_in : data_Do;
     assign mul_in_b = tap_Do;
-    assign mul_new_data = (counter == iterator);
+    assign mul_new_data = (counter == iterator) && (state == S_WAIT2);
     assign done = (counter == iterator) && (state == S_CALC);
     assign sent = sm_tready;
+
+    assign distance_c_i = (iterator > counter) ? iterator-counter : Tape_Num-(counter-iterator);
 
     S_AXI_LITE #(
         .pADDR_WIDTH(pADDR_WIDTH),
@@ -206,8 +212,10 @@ module fir
         case (state)
             S_IDLE:     next_state = (ap_start_w)   ? S_FETCH : S_IDLE;
             S_FETCH:    next_state = (received)     ? S_CALC  : S_FETCH;
-            S_CALC:     next_state = (done)         ? S_OUT   : S_CALC;
-            S_OUT:      next_state = (sent)         ? ((x_last) ? S_FINISH : S_IDLE) : S_OUT;
+            S_CALC:     next_state = (done)         ? S_WAIT  : S_CALC;
+            S_WAIT:     next_state = S_WAIT2;
+            S_WAIT2:    next_state = S_OUT;
+            S_OUT:      next_state = (sent)         ? ((x_last) ? S_FINISH : S_FETCH) : S_OUT;
             S_FINISH:   next_state = S_IDLE;
             default:    next_state = S_IDLE; 
         endcase
@@ -280,7 +288,7 @@ module fir
         end
         else begin
             tap_Di_wire             = 0;
-            tap_A_wire              = (11-iterator)<<2;
+            tap_A_wire              = (11-distance_c_i)<<2;
             tap_WE_wire             = 4'b0000;
             tap_EN_wire             = 1;
             for ( i=0; i<Tape_Num; i=i+1) begin
@@ -295,7 +303,7 @@ module fir
         received = (state == S_FETCH && ss_tvalid);
         if (next_state != S_OUT) begin
             data_Di_wire = 0;
-            data_EN_wire = 1;
+            data_EN_wire = ((11-distance_c_i) < data_counter);
             data_WE_wire = 4'b0000;
             data_A_wire  = (iterator << 2);
         end
@@ -337,6 +345,7 @@ module fir
             sm_tdata_reg  <= 0;
             sm_tlast_reg  <= 0;
 
+            data_counter <= 0;
             counter <= 0;
             iterator <= 1;
             x_in <= 0;
@@ -373,7 +382,7 @@ module fir
                 x_in   <= ss_tdata;
                 x_last <= ss_tlast;
             end
-
+            data_counter <= (state == S_OUT) ? data_counter+1 : data_counter;
             if (state == S_OUT) begin
                 if (counter == Tape_Num-1) begin
                     counter <= 0;
@@ -394,7 +403,7 @@ module fir
                     iterator <= counter + 2;
                 end
             end
-            else if (next_state == S_CALC || next_state == S_FETCH) begin
+            else if (next_state == S_CALC || next_state == S_FETCH || next_state == S_WAIT) begin
                 if ((iterator == Tape_Num-1) && (counter != Tape_Num-1)) begin
                     iterator <= 0;
                 end
@@ -406,10 +415,11 @@ module fir
                 end
             end
             
-            calc_tmp <= (state == S_FETCH || state == S_CALC) ? ((done) ? 0 : calc_tmp_w) : calc_tmp;
+            calc_tmp <= (state == S_FETCH || state == S_CALC || state == S_WAIT || state == S_WAIT2) ? calc_tmp_w :
+                        (state == S_OUT)                                         ? 0 : calc_tmp;
 
-            sm_tvalid_reg <= done || (state == S_OUT && ~sm_tready);
-            sm_tdata_reg  <= (done) ? calc_tmp_w : ((next_state == S_OUT) ? sm_tdata_reg : 0);
+            sm_tvalid_reg <= state == S_WAIT2 || (state == S_OUT && ~sm_tready);
+            sm_tdata_reg  <= (next_state == S_OUT) ? calc_tmp_w : ((next_state == S_FETCH) ? 0 : sm_tdata_reg);
             sm_tlast_reg  <= (next_state == S_OUT) ? x_last : 0;
 
         end
@@ -640,6 +650,8 @@ module MUL #(
     wire [2*pDATA_WIDTH:0]  mul;
     wire                    overflow_mul;
 
+    assign mul_in_a_extend  = {mul_in_a[pDATA_WIDTH-1], mul_in_a};
+    assign mul_in_b_extend  = {mul_in_b[pDATA_WIDTH-1], mul_in_b};
     assign mul = $signed(mul_in_a_extend) * $signed(mul_in_b_extend);
     assign overflow_mul = mul[(2*pDATA_WIDTH):(pDATA_WIDTH-1)] != {(pDATA_WIDTH+2){mul[2*pDATA_WIDTH-2]}};
 
