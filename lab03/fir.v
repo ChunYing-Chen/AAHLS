@@ -123,7 +123,6 @@ module fir
     wire                    r_ap_en;
     wire                    r_tap_valid;
     wire [pADDR_WIDTH-1:0]  r_tap_addr;
-    reg                     r_tap_data_en;
 
     reg                     tap_setting_check   [Tape_Num:0];
     //-------unused!---------------------
@@ -180,10 +179,8 @@ module fir
         .r_tap_addr(r_tap_addr),
         .r_ap_en(r_ap_en),
         .r_data_length(data_length),
-        .r_tap_data_en(r_tap_data_en),
         .axis_clk(axis_clk),
-        .axis_rst_n(axis_rst_n),
-        .next_state(next_state)
+        .axis_rst_n(axis_rst_n)
     );
 
     MUL #(
@@ -271,7 +268,6 @@ module fir
                     tap_setting_w[i] = 1;
                 end
             end
-            r_tap_data_en = 0;
         end
         else if (r_tap_valid && state == S_IDLE) begin
             tap_Di_wire = 0;
@@ -281,7 +277,6 @@ module fir
             for ( i=0; i<Tape_Num; i=i+1) begin
                 tap_setting_w[i] = tap_setting[i];
             end
-            r_tap_data_en = 1;
         end
         else begin
             tap_Di_wire             = 0;
@@ -291,7 +286,6 @@ module fir
             for ( i=0; i<Tape_Num; i=i+1) begin
                 tap_setting_w[i] = tap_setting[i];
             end
-            r_tap_data_en = 0;
         end
 
     end
@@ -451,10 +445,8 @@ module S_AXI_LITE #(
     output  wire [pADDR_WIDTH-1:0]   r_tap_addr,
     output  wire                     r_ap_en,
     input   wire [pDATA_WIDTH-1:0]   r_data_length,
-    input   wire                     r_tap_data_en,
     input   wire                     axis_clk,
-    input   wire                     axis_rst_n,
-    input   wire [2:0]               next_state
+    input   wire                     axis_rst_n
 );
     localparam AXIR_IDLE = 3'b000;
     localparam AXIR_RA   = 3'b001;
@@ -462,9 +454,16 @@ module S_AXI_LITE #(
     localparam AXIR_W1   = 3'b011;
     localparam AXIR_W2   = 3'b100;
     localparam AXIR_W3   = 3'b101;
+
+    localparam AXIW_IDLE = 2'b00;
+    localparam AXIW_WA   = 2'b01;
+    localparam AXIW_WD   = 2'b10;
     
     integer i;
     
+    reg [1:0]               axiw_state;
+    reg [1:0]               axiw_next_state;
+
     reg [2:0]               axir_state;
     reg [2:0]               axir_next_state;
 
@@ -477,8 +476,6 @@ module S_AXI_LITE #(
     reg                     arready_reg;
     reg                     rvalid_reg;
     reg [pDATA_WIDTH-1:0]   rdata_reg;
-    reg                     r_tap_data_en_shift;
-    reg                     r_tap_data_en_shift2;
 
     /*axi-lite write register*/
     reg [pADDR_WIDTH-1:0]   awaddr_reg;
@@ -505,7 +502,17 @@ module S_AXI_LITE #(
 
     assign r_tap_valid  = r_tap_valid_reg;
     assign r_tap_addr   = r_tap_addr_reg;
-    assign r_ap_en      = ~rvalid_reg && rready && (araddr_reg == 12'h000);
+    assign r_ap_en      = (axir_state == AXIR_RD) && (araddr_reg == 12'h000);
+
+
+    always @(*) begin
+        case (axiw_state)
+            AXIW_IDLE:  axiw_next_state = (awvalid)? AXIW_WA : AXIW_IDLE;
+            AXIW_WA:    axiw_next_state = AXIW_WD;
+            AXIW_WD:    axiw_next_state = AXIW_IDLE;
+            default:    axiw_next_state = AXIW_IDLE;
+        endcase
+    end
 
     always @(posedge axis_clk) begin
         if (~axis_rst_n) begin
@@ -513,26 +520,23 @@ module S_AXI_LITE #(
             awaddr_reg  <= 0;
         end
         else begin
-            awready_reg <= (awvalid && ~awready_reg);
-            awaddr_reg  <= (awvalid && ~awready_reg) ? awaddr : awaddr_reg;
+            awready_reg <= (axiw_next_state == AXIW_WA);
+            awaddr_reg  <= (axiw_next_state == AXIW_WA) ? awaddr : awaddr_reg;
         end
     end
 
     always @(posedge axis_clk) begin
         if (~axis_rst_n) begin
+            axiw_state <= AXIW_IDLE;
             wready_reg  <= 0;
             wdata_reg   <= 0;
             write_internal_valid <= 0;
         end
         else begin
-            wready_reg <= (wvalid && ~wready_reg && awready_reg);
-            if (wvalid && ~wready_reg) begin
-                wdata_reg <= wdata;
-                write_internal_valid <= 1;
-            end
-            else begin
-                write_internal_valid <= 0;
-            end
+            axiw_state <= axiw_next_state;
+            wready_reg <= (axiw_next_state == AXIW_WD);
+            wdata_reg  <= (axiw_next_state == AXIW_WD) ? wdata : 0;
+            write_internal_valid <= (axiw_next_state == AXIW_WD);
         end
     end
 
