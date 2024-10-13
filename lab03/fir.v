@@ -247,7 +247,7 @@ module fir
             ap_idle_w = ap_idle;
         end
 
-        if (r_ap_en) begin
+        if (r_ap_en && state == S_IDLE) begin
             ap_done_w = 0;
         end
         else if (next_state == S_FINISH) begin
@@ -564,7 +564,7 @@ module S_AXI_LITE #(
     always @(posedge axis_clk) begin
         if (~axis_rst_n) begin
             arready_reg <= 0;
-            araddr_reg  <= 0;
+            araddr_reg  <= {(pADDR_WIDTH){1'b1}};
         end
         else begin
             arready_reg <= (axir_next_state == AXIR_RA);
