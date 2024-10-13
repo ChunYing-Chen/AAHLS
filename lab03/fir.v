@@ -456,8 +456,18 @@ module S_AXI_LITE #(
     input   wire                     axis_rst_n,
     input   wire [2:0]               next_state
 );
+    localparam AXIR_IDLE = 3'b000;
+    localparam AXIR_RA   = 3'b001;
+    localparam AXIR_RD   = 3'b010;
+    localparam AXIR_W1   = 3'b011;
+    localparam AXIR_W2   = 3'b100;
+    localparam AXIR_W3   = 3'b101;
+    
     integer i;
     
+    reg [2:0]               axir_state;
+    reg [2:0]               axir_next_state;
+
     reg                     write_internal_valid;
     reg                     r_tap_valid_reg;
     reg [pADDR_WIDTH-1:0]   r_tap_addr_reg;
@@ -526,45 +536,60 @@ module S_AXI_LITE #(
         end
     end
 
+    always @(*) begin
+        case (axir_state)
+            AXIR_IDLE:  axir_next_state = (arvalid)? AXIR_RA : AXIR_IDLE;
+            AXIR_RA:    axir_next_state = (araddr_reg >= 12'h020 && araddr_reg <= 12'h0FF) ? AXIR_W1 : AXIR_RD;
+            AXIR_RD:    axir_next_state = AXIR_IDLE;
+            AXIR_W1:    axir_next_state = AXIR_W2;
+            AXIR_W2:    axir_next_state = AXIR_W3;
+            AXIR_W3:    axir_next_state = AXIR_RD;
+            default:    axir_next_state = AXIR_IDLE;
+        endcase
+    end
     always @(posedge axis_clk) begin
         if (~axis_rst_n) begin
             arready_reg <= 0;
             araddr_reg  <= 0;
         end
         else begin
-            arready_reg <= (arvalid && ~arready_reg);
-            araddr_reg  <= (arvalid && ~arready_reg) ? araddr : araddr_reg;
+            arready_reg <= (axir_next_state == AXIR_RA);
+            araddr_reg  <= (axir_next_state == AXIR_RA) ? araddr : araddr_reg;
         end
     end
 
     always @(posedge axis_clk) begin
         if (~axis_rst_n) begin
+            axir_state <= AXIR_IDLE;
+            
             rvalid_reg <= 0;
             rdata_reg  <= 0;
             r_tap_valid_reg <= 0;
             r_tap_addr_reg  <= 0;
-            r_tap_data_en_shift <= 0;
-            r_tap_data_en_shift2 <= 0;
-            r_tap_data_reg <= 0;
         end
         else begin
-            r_tap_data_en_shift <= r_tap_data_en;
-            r_tap_data_en_shift2 <= r_tap_data_en_shift;
-            r_tap_addr_reg <= (araddr_reg >= 12'h020 && araddr_reg <= 12'h0FF) ? araddr_reg : 0;
-            r_tap_data_reg <= (r_tap_data_en_shift2) ? r_tap_data : r_tap_data_reg;
-            rvalid_reg <= (araddr_reg >= 12'h020 && araddr_reg <= 12'h0FF) ? (rready && r_tap_data_en_shift2)
-                                                                           : (~rvalid_reg && rready && arready_reg);
-            if (araddr_reg >= 12'h020 && araddr_reg <= 12'h0FF) begin
-                rdata_reg <= r_tap_data_reg;
-            end
-            else if((araddr_reg == 12'h000)) begin
-                rdata_reg <= (~rvalid_reg && rready && arready_reg) ? {{(pDATA_WIDTH-3){1'b0}}, r_ap_data} : 0;
-            end
-            else if (araddr_reg == 12'h010) begin
-                rdata_reg <= (~rvalid_reg && rready && arready_reg) ? r_data_length : 0;
+            axir_state <= axir_next_state;
+            rvalid_reg <= axir_next_state == AXIR_RD;
+
+            r_tap_addr_reg <=  (axir_next_state == AXIR_W1) ? araddr_reg : 0;
+            r_tap_valid_reg <= (axir_next_state == AXIR_W1);
+
+            if (axir_next_state == AXIR_RD) begin
+                if (araddr_reg >= 12'h020 && araddr_reg <= 12'h0FF) begin
+                    rdata_reg <= r_tap_data;
+                end
+                else if((araddr_reg == 12'h000)) begin
+                    rdata_reg <= {{(pDATA_WIDTH-3){1'b0}}, r_ap_data};
+                end
+                else if (araddr_reg == 12'h010) begin
+                    rdata_reg <= r_data_length;
+                end
+                else begin
+                    rdata_reg <= {(pDATA_WIDTH){1'b1}};
+                end
             end
             else begin
-                rdata_reg <= (~rvalid_reg && rready && arready_reg) ? {(pDATA_WIDTH){1'b1}} : 0;
+                rdata_reg <= 0;
             end
         end
     end
