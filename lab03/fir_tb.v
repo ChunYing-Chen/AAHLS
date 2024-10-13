@@ -286,7 +286,8 @@ module fir_tb
             ss_tvalid <= 1;
             ss_tdata  <= in1;
             @(posedge axis_clk);
-            while (!ss_tready) begin
+            while (ss_tready !== 1) begin
+            //while (!ss_tready) begin
                 @(posedge axis_clk);
             end
         end
