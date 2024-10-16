@@ -460,14 +460,16 @@ module S_AXI_LITE #(
 );
     localparam AXIR_IDLE = 3'b000;
     localparam AXIR_RA   = 3'b001;
-    localparam AXIR_RD   = 3'b010;
-    localparam AXIR_W1   = 3'b011;
-    localparam AXIR_W2   = 3'b100;
-    localparam AXIR_W3   = 3'b101;
+    localparam AXIR_RR   = 3'b010;
+    localparam AXIR_RD   = 3'b011;
+    localparam AXIR_W1   = 3'b100;
+    localparam AXIR_W2   = 3'b101;
+    localparam AXIR_W3   = 3'b110;
 
     localparam AXIW_IDLE = 2'b00;
     localparam AXIW_WA   = 2'b01;
-    localparam AXIW_WD   = 2'b10;
+    localparam AXIW_WV   = 2'b10;
+    localparam AXIW_WD   = 2'b11;
     
     integer i;
     
@@ -480,6 +482,7 @@ module S_AXI_LITE #(
     reg                     write_internal_valid;
     reg                     r_tap_valid_reg;
     reg [pADDR_WIDTH-1:0]   r_tap_addr_reg;
+    reg [pDATA_WIDTH-1:0]   r_tap_data_reg;
     
     /*axi-lite read register*/
     reg [pADDR_WIDTH-1:0]   araddr_reg;
@@ -492,7 +495,6 @@ module S_AXI_LITE #(
     reg                     awready_reg;
     reg                     wready_reg;
     reg [pDATA_WIDTH-1:0]   wdata_reg;
-    reg [pDATA_WIDTH-1:0]   r_tap_data_reg;
 
     
 
@@ -518,7 +520,8 @@ module S_AXI_LITE #(
     always @(*) begin
         case (axiw_state)
             AXIW_IDLE:  axiw_next_state = (awvalid)? AXIW_WA : AXIW_IDLE;
-            AXIW_WA:    axiw_next_state = AXIW_WD;
+            AXIW_WA:    axiw_next_state = AXIW_WV;
+            AXIW_WV:    axiw_next_state = (wvalid)? AXIW_WD : AXIW_WV;
             AXIW_WD:    axiw_next_state = AXIW_IDLE;
             default:    axiw_next_state = AXIW_IDLE;
         endcase
@@ -553,11 +556,12 @@ module S_AXI_LITE #(
     always @(*) begin
         case (axir_state)
             AXIR_IDLE:  axir_next_state = (arvalid)? AXIR_RA : AXIR_IDLE;
-            AXIR_RA:    axir_next_state = (araddr_reg >= 12'h020 && araddr_reg <= 12'h0FF) ? AXIR_W1 : AXIR_RD;
+            AXIR_RA:    axir_next_state = (araddr_reg >= 12'h020 && araddr_reg <= 12'h0FF) ? AXIR_W1 : AXIR_RR;
+            AXIR_RR:    axir_next_state = (rready)? AXIR_RD : AXIR_RR;
             AXIR_RD:    axir_next_state = AXIR_IDLE;
             AXIR_W1:    axir_next_state = AXIR_W2;
             AXIR_W2:    axir_next_state = AXIR_W3;
-            AXIR_W3:    axir_next_state = AXIR_RD;
+            AXIR_W3:    axir_next_state = AXIR_RR;
             default:    axir_next_state = AXIR_IDLE;
         endcase
     end
@@ -580,6 +584,7 @@ module S_AXI_LITE #(
             rdata_reg  <= 0;
             r_tap_valid_reg <= 0;
             r_tap_addr_reg  <= 0;
+            r_tap_data_reg  <= 0;
         end
         else begin
             axir_state <= axir_next_state;
@@ -587,10 +592,11 @@ module S_AXI_LITE #(
 
             r_tap_addr_reg <=  (axir_next_state == AXIR_W1) ? araddr_reg : 0;
             r_tap_valid_reg <= (axir_next_state == AXIR_W1);
+            r_tap_data_reg <= (axir_next_state == AXIR_RR)? r_tap_data : r_tap_data_reg;
 
             if (axir_next_state == AXIR_RD) begin
                 if (araddr_reg >= 12'h020 && araddr_reg <= 12'h0FF) begin
-                    rdata_reg <= r_tap_data;
+                    rdata_reg <= r_tap_data_reg;
                 end
                 else if((araddr_reg == 12'h000)) begin
                     rdata_reg <= {{(pDATA_WIDTH-3){1'b0}}, r_ap_data};
@@ -610,7 +616,7 @@ module S_AXI_LITE #(
 endmodule
 
 module ADD #(
-    pDATA_WIDTH = 32
+    parameter pDATA_WIDTH = 32
 )(
     input  wire [pDATA_WIDTH-1:0] add_in_a,
     input  wire [pDATA_WIDTH-1:0] add_in_b,
@@ -635,7 +641,7 @@ module ADD #(
 endmodule
 
 module MUL #(
-    pDATA_WIDTH = 32
+    parameter pDATA_WIDTH = 32
 ) (
     input  wire [pDATA_WIDTH-1:0] mul_in_a,
     input  wire [pDATA_WIDTH-1:0] mul_in_b,
