@@ -288,7 +288,7 @@ module fir
         end
         else begin
             tap_Di_wire             = 0;
-            tap_A_wire              = (11-distance_c_i)<<2;
+            tap_A_wire              = (next_state==S_FETCH && state == S_OUT)? ((12-distance_c_i)<<2) : ((11-distance_c_i)<<2);
             tap_WE_wire             = 4'b0000;
             tap_EN_wire             = 1;
             for ( i=0; i<Tape_Num; i=i+1) begin
@@ -303,7 +303,7 @@ module fir
         received = (state == S_FETCH && ss_tvalid);
         if (next_state != S_OUT) begin
             data_Di_wire = 0;
-            data_EN_wire = ((11-distance_c_i) < data_counter);
+            data_EN_wire = (((next_state==S_FETCH && state == S_OUT)? (12-distance_c_i) : (11-distance_c_i)) < data_counter);
             data_WE_wire = 4'b0000;
             data_A_wire  = (iterator << 2);
         end
@@ -378,7 +378,7 @@ module fir
 
             ss_tready_reg <= ss_tready_w;
 
-            if (state == S_FETCH && ss_tvalid) begin
+            if ((state == S_FETCH) && ss_tvalid) begin
                 x_in   <= ss_tdata;
                 x_last <= ss_tlast;
             end
@@ -392,7 +392,8 @@ module fir
                 end
             end
 
-            if (state == S_OUT) begin
+            // if (state == S_OUT) begin
+            if (state == S_WAIT2) begin
                 if (counter == Tape_Num-2) begin
                     iterator <= 0;
                 end
@@ -403,7 +404,8 @@ module fir
                     iterator <= counter + 2;
                 end
             end
-            else if (next_state == S_CALC || next_state == S_FETCH || next_state == S_WAIT) begin
+            //else if (next_state == S_CALC || next_state == S_FETCH || next_state == S_WAIT ) begin
+            else if (next_state == S_CALC || next_state == S_FETCH || next_state == S_WAIT || next_state == S_WAIT2) begin
                 if ((iterator == Tape_Num-1) && (counter != Tape_Num-1)) begin
                     iterator <= 0;
                 end
@@ -415,7 +417,9 @@ module fir
                 end
             end
             
-            calc_tmp <= (state == S_FETCH || state == S_CALC || state == S_WAIT || state == S_WAIT2) ? calc_tmp_w :
+            //calc_tmp <= (state == S_FETCH || state == S_CALC || state == S_WAIT || state == S_WAIT2) ? calc_tmp_w :
+            //            (state == S_OUT)                                         ? 0 : calc_tmp;
+            calc_tmp <= (state == S_CALC || state == S_WAIT || state == S_WAIT2) ? calc_tmp_w :
                         (state == S_OUT)                                         ? 0 : calc_tmp;
 
             sm_tvalid_reg <= state == S_WAIT2 || (state == S_OUT && ~sm_tready);
