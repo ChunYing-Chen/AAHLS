@@ -382,8 +382,12 @@ module fir
                 x_in   <= ss_tdata;
                 x_last <= ss_tlast;
             end
-            data_counter <= (state == S_OUT) ? data_counter+1 : data_counter;
-            if (state == S_OUT) begin
+            else if (state == S_FINISH) begin
+                x_in   <= 0;
+                x_last <= 0;
+            end
+            data_counter <= (state == S_OUT && next_state != S_OUT) ? data_counter+1 : (state == S_IDLE)? 0 :data_counter;
+            if (state == S_OUT && next_state != S_OUT) begin
                 if (counter == Tape_Num-1) begin
                     counter <= 0;
                 end
@@ -391,8 +395,10 @@ module fir
                     counter <= counter + 1;
                 end
             end
+            else if (state == S_IDLE) begin
+                counter <= 0;
+            end
 
-            // if (state == S_OUT) begin
             if (state == S_WAIT2) begin
                 if (counter == Tape_Num-2) begin
                     iterator <= 0;
@@ -404,7 +410,6 @@ module fir
                     iterator <= counter + 2;
                 end
             end
-            //else if (next_state == S_CALC || next_state == S_FETCH || next_state == S_WAIT ) begin
             else if (next_state == S_CALC || next_state == S_FETCH || next_state == S_WAIT || next_state == S_WAIT2) begin
                 if ((iterator == Tape_Num-1) && (counter != Tape_Num-1)) begin
                     iterator <= 0;
@@ -416,14 +421,15 @@ module fir
                     iterator <= iterator;
                 end
             end
+            else if (state == S_IDLE) begin
+                iterator <= 1;
+            end
             
-            //calc_tmp <= (state == S_FETCH || state == S_CALC || state == S_WAIT || state == S_WAIT2) ? calc_tmp_w :
-            //            (state == S_OUT)                                         ? 0 : calc_tmp;
             calc_tmp <= (state == S_CALC || state == S_WAIT || state == S_WAIT2) ? calc_tmp_w :
                         (state == S_OUT)                                         ? 0 : calc_tmp;
 
             sm_tvalid_reg <= state == S_WAIT2 || (state == S_OUT && ~sm_tready);
-            sm_tdata_reg  <= (next_state == S_OUT) ? calc_tmp_w : ((next_state == S_FETCH) ? 0 : sm_tdata_reg);
+            sm_tdata_reg  <= (next_state == S_OUT && state != S_OUT) ? calc_tmp_w : ((next_state == S_FETCH) ? 0 : sm_tdata_reg);
             sm_tlast_reg  <= (next_state == S_OUT) ? x_last : 0;
 
         end
