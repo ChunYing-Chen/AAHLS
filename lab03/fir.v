@@ -181,7 +181,7 @@ module fir
         .axi_lite_addr(axi_lite_addr),
         .r_ap_data({ap_idle, ap_done, ap_start}),
         .r_tap_valid(r_tap_valid),
-        .r_tap_data(tap_Do),
+        .r_tap_data((next_state == S_IDLE) ? tap_Do : {(pDATA_WIDTH){1'b1}}),
         .r_tap_addr(r_tap_addr),
         .r_ap_en(r_ap_en),
         .r_data_length(data_length),
@@ -609,7 +609,7 @@ module S_AXI_LITE #(
                 end
             end
             else begin
-                rdata_reg <= 0;
+                rdata_reg <= {(pDATA_WIDTH){1'b1}};
             end
         end
     end
